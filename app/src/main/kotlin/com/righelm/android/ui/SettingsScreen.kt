@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.righelm.android.BuildConfig
 import com.righelm.android.R
 import com.righelm.android.RigController
+import com.righelm.core.KeyerMode
 import com.righelm.core.fmt
 
 @Composable
@@ -65,7 +66,7 @@ fun SettingsScreen(rig: RigController) {
             }
             val a = rig.audioStats
             if (a.connected) {
-                Text("Stream: ${a.rate / 1000} kHz · ${a.packets} packets · ${a.lost} lost", fontSize = 13.sp, color = Palette.secondary)
+                Text("Stream: ${a.rate / 1000} kHz · ${a.packets} packets · ${a.lost} lost · ${rig.audioDropouts} dropouts", fontSize = 13.sp, color = Palette.secondary)
             } else if (a.error != null) {
                 Text(a.error!!, fontSize = 13.sp, color = Palette.red)
             }
@@ -73,8 +74,8 @@ fun SettingsScreen(rig: RigController) {
 
         Section(
             "Transmit",
-            footer = "While this is off, nothing that keys the radio leaves the phone: PTT, MOX, TUNE and VOX are refused. " +
-                "It turns itself off each time the app starts or connects. The radio is also let go when the app goes to the background, " +
+            footer = "While this is off, nothing that keys the radio leaves the phone: PTT, MOX, TUNE, VOX and the CW key are refused. " +
+                "It stays on until you turn it off. The radio is also let go when the app goes to the background, " +
                 "after the time-out, when a phone call takes the audio, and by the station if the phone drops off the network.",
         ) {
             SwitchRow("Allow transmit from this phone", rig.transmitAllowed, color = Palette.red) { rig.transmitAllowed = it }
@@ -97,6 +98,18 @@ fun SettingsScreen(rig: RigController) {
                 Text("%.1f×".fmt(rig.micGain), Modifier.width(44.dp), fontFamily = Mono, fontSize = 13.sp)
             }
             if (rig.phoneMic) MicMeter(rig, Palette.green)
+        }
+
+        Section(
+            "CW key",
+            footer = "RADIO KEY / PHONE KEY on the Operate page picks where CW comes from. The app always starts on the radio's key. " +
+                "The phone key puts the radio in CW with break-in on, and the paddles take the place of push-to-talk. " +
+                "The speed is the radio's keyer speed. It goes back to the radio's key when the station disconnects, the radio leaves CW, " +
+                "transmit is locked, the app goes to the background, or after 10 minutes unused. A key held down longer than 6 seconds " +
+                "is released, and the station lets go if the phone goes quiet.",
+        ) {
+            PickerRow("Phone key type", rig.keyerMode, KeyerMode.entries.map { it to it.label }, rig.keyerMode.label) { rig.keyerMode = it }
+            SwitchRow("Sidetone on this phone", rig.cwSidetone) { rig.cwSidetone = it }
         }
 
         Section("General") {

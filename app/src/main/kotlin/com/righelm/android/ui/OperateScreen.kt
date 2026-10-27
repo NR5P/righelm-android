@@ -1,5 +1,8 @@
 package com.righelm.android.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -13,7 +16,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -62,6 +67,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -84,6 +90,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -96,6 +103,7 @@ import com.righelm.core.fmt
 import com.righelm.core.Meter
 import com.righelm.core.MeterCal
 import com.righelm.core.Mode
+import com.righelm.core.RadioState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.atan2
@@ -117,12 +125,13 @@ fun OperateScreen(rig: RigController) {
             ConnectionBanner(rig)
             FrequencyCard(rig)
             MeterCard(rig)
+            if (rig.cwArmed) CWKeyCard(rig)
             TuningCard(rig)
             BandModeCard(rig)
             VFOCard(rig)
             TransmitCard(rig)
         }
-        PTTBar(rig)
+        if (rig.cwArmed) PaddleBar(rig) else PTTBar(rig)
     }
 }
 
@@ -352,12 +361,10 @@ private fun MeterCard(rig: RigController) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             if (s.transmitting) {
                 val po = MeterCal.interpolate(MeterCal.po, s.meter(Meter.PO) ?: 0)
-                MeterBar("PO", po / 100, "%.0f W".fmt(po), Palette.amber, ticks = listOf(0.25 to "25", 0.5 to "50", 0.75 to "75"))
-                val swrRaw = s.meter(Meter.SWR) ?: 0
-                val swr = MeterCal.interpolate(MeterCal.swr, swrRaw)
-                MeterBar("SWR", swrRaw / 255.0, "%.1f".fmt(swr), Palette.cyan, redFrom = 89.0 / 255)
-                val alc = (s.meter(Meter.ALC) ?: 0) / 255.0
-                MeterBar("ALC", alc, "%.0f%%".fmt(alc * 100), Palette.cyan, redFrom = 0.5)
+                // In the S-meter's place, with ALC and SWR on the thin line
+                // under it where the audio level was: the card keeps its size.
+                MeterBar("PO", po / 100, "%.0f W".fmt(po), Palette.amber, ticks = listOf(0.25 to "25", 0.5 to "50", 0.75 to "75"), height = 18.dp)
+                TxMeterLine(s)
             } else {
                 MeterBar(
                     "S", s.sMeter / 255.0, MeterCal.sText(s.sMeter), Palette.green, redFrom = 130.0 / 255,
@@ -372,6 +379,34 @@ private fun MeterCard(rig: RigController) {
             }
             if (s.highSWR) Text("HI-SWR", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.red)
         }
+    }
+}
+
+/** ALC and SWR side by side on one thin line, under PO. */
+@Composable
+private fun TxMeterLine(s: RadioState) {
+    val alc = (s.meter(Meter.ALC) ?: 0) / 255.0
+    val swrRaw = s.meter(Meter.SWR) ?: 0
+    val swr = MeterCal.interpolate(MeterCal.swr, swrRaw)
+    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        SlimMeter("ALC", alc, "%.0f%%".fmt(alc * 100), Palette.cyan, redFrom = 0.5)
+        SlimMeter("SWR", swrRaw / 255.0, "%.1f".fmt(swr), Palette.cyan, redFrom = 89.0 / 255)
+    }
+}
+
+@Composable
+private fun RowScope.SlimMeter(label: String, fraction: Double, text: String, color: Color, redFrom: Double? = null) {
+    val f by animateFloatAsState(fraction.coerceIn(0.0, 1.0).toFloat(), tween(120, easing = LinearEasing), label = "meter")
+    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(22.dp), color = Palette.dim, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Box(Modifier.weight(1f).height(4.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f))) {
+            val red = redFrom != null && f > redFrom
+            Box(Modifier.fillMaxWidth(f).fillMaxHeight().clip(CircleShape).background(if (red) Palette.red else color))
+        }
+        Text(
+            text, Modifier.width(34.dp), color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold, fontFamily = Mono, textAlign = TextAlign.End,
+        )
     }
 }
 
@@ -612,6 +647,9 @@ private fun TransmitCard(rig: RigController) {
             LEDButton(if (rig.phoneMic) "PHONE MIC" else "RADIO MIC", rig.phoneMic, Modifier.weight(1f), Palette.red) {
                 rig.switchPhoneMic(!rig.phoneMic)
             }
+            LEDButton(if (rig.cwArmed) "PHONE KEY" else "RADIO KEY", rig.cwArmed, Modifier.weight(1f), Palette.red) {
+                rig.setPhoneKey(!rig.cwArmed)
+            }
             LEDButton("MOX", rig.latched || (s.transmitting && rig.txStartedAt != null), Modifier.weight(1f), Palette.red) {
                 rig.toggleLatch()
             }
@@ -623,6 +661,11 @@ private fun TransmitCard(rig: RigController) {
         }
         Spacer(Modifier.height(10.dp))
         Text(statusLine(rig), fontSize = 12.sp, color = if (rig.sendingMic) Palette.red else Palette.secondary)
+        val why = rig.cwDisarmedReason
+        if (why != null && !rig.cwArmed) {
+            Spacer(Modifier.height(4.dp))
+            Text("Back to the radio's key: $why", fontSize = 12.sp, color = Palette.amber)
+        }
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Caption("ANT", Modifier.width(32.dp))
@@ -652,7 +695,7 @@ private fun statusLine(rig: RigController): String {
         if (rig.targetBeacon?.mic == false) return "⚠︎ The station does not accept microphone audio (RigHelm → Remote → Accept microphone audio)"
         return "Hold the button below to talk through the phone"
     }
-    return "Radio mic: the station's own microphone is used"
+    return "Radio mic: the station's own microphone is used. Tap RADIO MIC to talk through the phone."
 }
 
 /** Hold-to-talk, pinned above the tab bar. */
@@ -660,8 +703,9 @@ private fun statusLine(rig: RigController): String {
 private fun PTTBar(rig: RigController) {
     var pressed by remember { mutableStateOf(false) }
     val view = LocalView.current
-    val txing = rig.state.transmitting
     val locked = !rig.canTransmit
+    // Show it keyed the moment the button goes down, ahead of the radio's answer.
+    val txing = rig.state.transmitting || (pressed && !locked)
     val started = rig.txStartedAt
     val now by produceState(System.currentTimeMillis(), started) {
         while (started != null) {

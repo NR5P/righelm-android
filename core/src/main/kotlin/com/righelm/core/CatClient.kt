@@ -166,6 +166,10 @@ class CatClient(
                         // Show the change right away; the radio's answer confirms it.
                         if (!CatCommand.isTransmit(f) && state.apply(f)) dirty = true
                         CatCommand.readback(f)?.let { later += (now + 300) to it }
+                        // Keying: confirm it as soon as the radio has had time to switch.
+                        if (f.startsWith("TX") || f.startsWith("MX")) {
+                            later += listOf(50L, 120L).map { (now + it) to "TX;" }
+                        }
                         if (CatCommand.movesVFO(f)) {
                             later += CatCommand.vfoKeys.map { (now + 400) to it }
                         }

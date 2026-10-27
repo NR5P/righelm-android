@@ -9,66 +9,244 @@ import android.media.MediaRecorder
 import android.os.Process
 import com.righelm.core.RemoteProtocol
 import com.righelm.core.levelDbfs
+import kotlin.math.PI
 import kotlin.math.floor
+import kotlin.math.sin
 
 /**
- * Holds incoming radio audio long enough to ride out Wi-Fi delivering
- * packets in clumps, and keeps latency bounded when they arrive faster
- * than they play.
+ * Playout buffer for radio audio, which Wi-Fi often delivers in clumps:
+ * several 20 ms packets at once, 100 ms or more apart. It waits until it
+ * holds [target] before playing, and when it runs dry anyway it fades out
+ * (no click), deepens itself, and fades back in.
+ *
+ * The station's sound card and the phone never run at quite the same rate
+ * (a ThinkPad station measured 0.4 to 0.9 % slow). Without allowing for it
+ * a slow station drains any buffer, however deep, and drops out every half
+ * minute. So playback speed is the measured rate difference (samples
+ * received against samples played over the last half minute or so: long
+ * enough for clumps to average out, short enough to follow a station whose
+ * USB audio loses more at some times than others) plus a gentle pull
+ * toward [target], never more than 3 % off.
  */
 class JitterBuffer {
-    private val ring = FloatArray(48_000 * 2)
+    private var ring = FloatArray(19_200)
     private var readIndex = 0
     private var count = 0
-    private var priming = true
-    /** Start (and restart after running dry) once this much is waiting. */
-    private var target = 4_800
-    /** More than this waiting: skip ahead to [target]. */
-    private var ceiling = 14_400
+    private var playing = false
+    /** Depth to build up before (re)starting, and to hold while playing. */
+    private var target = 2_400
+    private var minTarget = 2_400
+    private var maxTarget = 9_600
+    private var rate = 0
+    /** Depth smoothed over about 2 s, so a clump doesn't swing the speed. */
+    private var smoothed = 0.0
+    private var smoothing = 1.0 / 48_000
+    /**
+     * Measured rate difference between the station and the phone, and the
+     * counts behind it: samples arriving and samples played, both only
+     * while playing (prebuffering would count as a fast station), both
+     * fading by 3 % a second. The difference is kept across restarts.
+     */
+    private var drift = 0.0
+    private var received = 0.0
+    private var ticks = 0.0
+    private var sinceFade = 0
+    /** Playback speed now, and the position between the next two samples. */
+    private var speed = 1.0
+    private var frac = 0.0
+    /** Samples played since the last dropout, to give back depth that a long clean spell shows isn't needed. */
+    private var sinceDry = 0
+    private var last = 0f
+    private var gain = 0f
+    private var gainStep = 1f / 240
+    /** Fade length around gaps, and samples of the next write still to fade in. */
+    private var fadeLength = 240
+    private var fadeIn = 0
+    /** Times playback ran dry since the stream started. */
+    private var dryCount = 0
+
+    val dropouts: Int
+        @Synchronized get() = dryCount
 
     @Synchronized
     fun configure(rate: Int) {
-        target = rate / 5 // 200 ms
-        ceiling = rate * 3 / 5 // 600 ms
+        // An audio restart (route change, interruption) keeps the depth and
+        // drift already learned: starting over means the same dropouts
+        // again until it relearns.
+        if (rate != this.rate) {
+            this.rate = rate
+            target = rate / 10 // 100 ms to start
+            drift = 0.0
+            dryCount = 0
+        }
+        // Start from the last difference, worth 10 s of evidence.
+        ticks = rate * 10.0
+        received = ticks * (1 + drift)
+        sinceFade = 0
+        minTarget = rate / 10
+        maxTarget = rate * 2 / 5 // may grow to 400 ms
+        ring = FloatArray(maxTarget * 2)
+        smoothing = 1 / (2.0 * rate)
+        fadeLength = maxOf(rate / 100, 1) // 10 ms
+        gainStep = 1f / fadeLength
         readIndex = 0
         count = 0
-        priming = true
+        playing = false
+        smoothed = target.toDouble()
+        speed = 1.0
+        frac = 0.0
+        sinceDry = 0
+        last = 0f
+        gain = 0f
+        fadeIn = 0
     }
 
     @Synchronized
     fun write(samples: ShortArray, gain: Float) {
         val scale = gain / 32768f
-        val cap = ring.size
         for (s in samples) {
-            ring[(readIndex + count) % cap] = s * scale
-            if (count < cap) count += 1 else readIndex = (readIndex + 1) % cap
-        }
-        if (count > ceiling) {
-            val drop = count - target
-            readIndex = (readIndex + drop) % cap
-            count -= drop
+            var v = s * scale
+            if (fadeIn > 0) {
+                v *= (fadeLength - fadeIn).toFloat() / fadeLength
+                fadeIn -= 1
+            }
+            append(v)
         }
     }
 
-    fun writeSilence(n: Int) = write(ShortArray(n), 0f)
+    /**
+     * Stand in for lost packets: silence that keeps the timing, with the
+     * audio either side faded so the gap doesn't click. With [n] 0 the two
+     * sides are just faded together, for losses too long to fill.
+     */
+    @Synchronized
+    fun writeGap(n: Int) {
+        val cap = ring.size
+        val k = minOf(fadeLength, count)
+        for (i in 0 until k) {
+            ring[(readIndex + count - k + i) % cap] *= (k - i).toFloat() / (k + 1)
+        }
+        repeat(n) { append(0f) }
+        fadeIn = fadeLength
+    }
 
     @Synchronized
     fun read(out: FloatArray, n: Int) {
-        if (priming) {
-            if (count < target) {
-                out.fill(0f, 0, n)
-                return
-            }
-            priming = false
-        }
+        for (i in 0 until n) out[i] = next()
+    }
+
+    // All below run with the lock held.
+
+    /** Queue one sample; past capacity the oldest is dropped. */
+    private fun append(v: Float) {
+        if (playing) received += 1
         val cap = ring.size
-        val take = minOf(n, count)
-        for (i in 0 until take) out[i] = ring[(readIndex + i) % cap]
-        readIndex = (readIndex + take) % cap
-        count -= take
-        if (take < n) {
-            out.fill(0f, take, n)
-            priming = true
+        if (count == cap) {
+            readIndex = (readIndex + 1) % cap
+            count -= 1
+        }
+        ring[(readIndex + count) % cap] = v
+        count += 1
+    }
+
+    /** The next sample to play. */
+    private fun next(): Float {
+        if (!playing && count >= target) {
+            playing = true
+            frac = 0.0
+        }
+        if (playing) {
+            // Two samples to interpolate between.
+            if (count >= 2) {
+                val a = ring[readIndex]
+                val b = ring[(readIndex + 1) % ring.size]
+                val v = a + (b - a) * frac.toFloat()
+                steer()
+                frac += speed
+                while (frac >= 1 && count >= 2) {
+                    readIndex = (readIndex + 1) % ring.size
+                    count -= 1
+                    frac -= 1
+                }
+                gain = minOf(gain + gainStep, 1f)
+                last = v
+                return v * gain
+            }
+            // Ran dry: rebuild a deeper buffer before playing again.
+            playing = false
+            dryCount += 1
+            sinceDry = 0
+            target = minOf(target + target / 2, maxTarget)
+        }
+        gain = maxOf(gain - gainStep, 0f)
+        return last * gain
+    }
+
+    /** Set the playback speed: the clocks' measured difference, plus up to 1 % more to bring the depth back to [target]. */
+    private fun steer() {
+        ticks += 1
+        sinceFade += 1
+        if (sinceFade >= rate) {
+            sinceFade = 0
+            received *= 0.97
+            ticks *= 0.97
+        }
+        smoothed += (count - smoothed) * smoothing
+        drift = ((received - ticks) / ticks).coerceIn(-MAX_SKEW, MAX_SKEW)
+        // Depth error in units of 100 ms, so it behaves the same at any target.
+        val err = (smoothed - target) / (rate / 10)
+        val pull = (err * 0.005).coerceIn(-0.01, 0.01)
+        speed = 1 + (drift + pull).coerceIn(-MAX_SKEW, MAX_SKEW)
+        // Five minutes without a dropout: try 10 % less latency. Sooner
+        // trims it below what the next Wi-Fi gap needs.
+        sinceDry += 1
+        if (sinceDry >= rate * 300) {
+            sinceDry = 0
+            target = maxOf(target - target / 10, minTarget)
+        }
+    }
+
+    private companion object {
+        /** Most the playback speed may move from 1. */
+        const val MAX_SKEW = 0.03
+    }
+}
+
+/**
+ * A CW sidetone mixed into playback while the phone key is down: over a
+ * network the radio's own sidetone comes back too late to send by.
+ */
+class Sidetone {
+    private var enabled = false
+    private var down = false
+    private var hz = 700f
+    private var volume = 0.3f
+    private var phase = 0f
+    private var amp = 0f
+
+    @Synchronized
+    fun setEnabled(on: Boolean) {
+        enabled = on
+    }
+
+    /** From the keyer thread. */
+    @Synchronized
+    fun key(down: Boolean) {
+        this.down = down
+    }
+
+    /** On the playback thread: add the tone to [out]. */
+    @Synchronized
+    fun mix(out: FloatArray, n: Int, rate: Float) {
+        val target = if (enabled && down) 1f else 0f
+        if (target == 0f && amp == 0f) return
+        val step = 2 * PI.toFloat() * hz / rate
+        val ramp = 1 / (rate * 0.004f) // 4 ms rise and fall: no clicks
+        for (i in 0 until n) {
+            amp = if (amp < target) minOf(amp + ramp, target) else maxOf(amp - ramp, target)
+            phase += step
+            if (phase > 2 * PI.toFloat()) phase -= 2 * PI.toFloat()
+            out[i] += sin(phase) * amp * volume
         }
     }
 }
@@ -79,6 +257,7 @@ class JitterBuffer {
  */
 class AudioIO {
     val buffer = JitterBuffer()
+    val sidetone = Sidetone()
     var rate = RemoteProtocol.AUDIO_RATE
         private set
     @Volatile var running = false
@@ -174,6 +353,7 @@ class AudioIO {
         val chunk = FloatArray(rate / 100) // 10 ms
         while (generation == gen) {
             buffer.read(chunk, chunk.size)
+            sidetone.mix(chunk, chunk.size, rate.toFloat())
             val g = volume * duck
             for (i in chunk.indices) chunk[i] = (chunk[i] * g).coerceIn(-1f, 1f)
             if (t.write(chunk, 0, chunk.size, AudioTrack.WRITE_BLOCKING) < 0) break

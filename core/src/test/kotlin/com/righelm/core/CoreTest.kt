@@ -150,3 +150,83 @@ class StateTest {
         assertEquals("BS05;", Band.all[5].setCommand)
     }
 }
+
+/** Records key transitions with timestamps. */
+private class RecorderLine : KeyLine {
+    private val events = mutableListOf<Pair<Boolean, Double>>()
+    val log: List<Pair<Boolean, Double>> get() = synchronized(events) { events.toList() }
+    override fun set(down: Boolean) = synchronized(events) { events += down to System.nanoTime() / 1e9 }
+    override fun keepalive(down: Boolean) {}
+    override fun close() {}
+}
+
+class KeyerTest {
+    private fun keyer(mode: KeyerMode, wpm: Int): Pair<CwKeyer, RecorderLine> {
+        val line = RecorderLine()
+        val k = CwKeyer(mode, wpm) { line }
+        Thread.sleep(50)
+        return k to line
+    }
+
+    /** Key-down lengths in dits. */
+    private fun downs(log: List<Pair<Boolean, Double>>, dit: Double): List<Int> =
+        log.zipWithNext().filter { it.first.first && !it.second.first }.map { Math.round((it.second.second - it.first.second) / dit).toInt() }
+
+    @Test fun morsePlanTiming() {
+        assertEquals(listOf(true to 1, false to 3), morsePlan("E"))
+        assertEquals(
+            listOf(true to 1, false to 1, true to 3, false to 7, true to 3, false to 1, true to 1, false to 1, true to 1, false to 1, true to 1, false to 3),
+            morsePlan("A B"),
+        )
+    }
+
+    @Test fun textIsSentWithCorrectTiming() {
+        val (k, line) = keyer(KeyerMode.IAMBIC_B, 40) // 30 ms dits
+        k.input(KeyerInput.Text("PARIS"))
+        Thread.sleep(1600)
+        k.stop()
+        val log = line.log
+        assertEquals(listOf(1, 3, 3, 1, 1, 3, 1, 3, 1, 1, 1, 1, 1, 1), downs(log, 0.030))
+        assertEquals("key left up", false, log.last().first)
+    }
+
+    @Test fun squeezeAlternatesAndReleaseStops() {
+        val (k, line) = keyer(KeyerMode.IAMBIC_B, 40)
+        k.input(KeyerInput.Paddles(dit = true, dah = true))
+        Thread.sleep(500)
+        k.input(KeyerInput.Paddles(dit = false, dah = false))
+        Thread.sleep(300)
+        k.stop()
+        val d = downs(line.log, 0.030)
+        assertTrue("$d", d.size >= 3)
+        assertTrue("alternates: $d", d.zipWithNext().all { it.first != it.second })
+        assertEquals(false, line.log.last().first)
+    }
+
+    @Test fun straightKeyFollows() {
+        val (k, line) = keyer(KeyerMode.STRAIGHT, 20)
+        k.input(KeyerInput.Straight(true))
+        Thread.sleep(80)
+        k.input(KeyerInput.Straight(false))
+        Thread.sleep(50)
+        assertEquals(listOf(true, false), line.log.map { it.first })
+        k.stop()
+    }
+
+    @Test fun stoppingLetsGo() {
+        val (k, line) = keyer(KeyerMode.STRAIGHT, 20)
+        k.input(KeyerInput.Straight(true))
+        Thread.sleep(50)
+        k.stop()
+        Thread.sleep(150)
+        assertEquals(false, line.log.last().first)
+        assertFalse(k.status.ready)
+    }
+
+    @Test fun openFailureIsReported() {
+        val k = CwKeyer(KeyerMode.IAMBIC_B, 20) { throw RemoteError.Denied("this server does not allow transmit") }
+        Thread.sleep(50)
+        assertEquals("this server does not allow transmit", k.status.error)
+        k.stop()
+    }
+}
