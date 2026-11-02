@@ -48,6 +48,13 @@ class RigService : Service() {
         return START_NOT_STICKY
     }
 
+    /** Swiped away from recent apps: stop the station and its audio. */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        (application as RigHelmApp).rig.closed()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null

@@ -369,8 +369,17 @@ class RigController(private val context: Context) {
         RigService.start(context)
     }
 
+    /**
+     * The app was swiped away: close like [disconnect], but keep the station
+     * so the next launch reconnects to it, as on the iPhone.
+     */
+    fun closed() {
+        disconnect(forget = false)
+        launched = false
+    }
+
     /** Lets go of the transmitter, puts the radio's mic back, and closes. */
-    fun disconnect() {
+    fun disconnect(forget: Boolean = true) {
         if (target == null) return
         unkey()
         setPhoneKey(false)
@@ -390,7 +399,7 @@ class RigController(private val context: Context) {
         sendingMic = false
         pendingFreq = null
         if (wifiLock.isHeld) wifiLock.release()
-        prefs.edit().remove("lastServer").apply()
+        if (forget) prefs.edit().remove("lastServer").apply()
         RigService.stop(context)
         if (!inForeground) stopDiscovery()
     }

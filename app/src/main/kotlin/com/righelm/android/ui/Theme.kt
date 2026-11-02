@@ -31,10 +31,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -124,6 +129,10 @@ fun LEDButton(
 ) {
     val enabled = LocalControlsEnabled.current
     val shape = RoundedCornerShape(9.dp)
+    // Shrink a long title ("RADIO MIC") to fit rather than cutting it off,
+    // like the iPhone app's minimumScaleFactor; hidden until it fits.
+    var scale by remember(title) { mutableFloatStateOf(1f) }
+    var fitted by remember(title) { mutableStateOf(false) }
     Box(
         modifier
             .heightIn(min = 36.dp)
@@ -136,12 +145,17 @@ fun LEDButton(
     ) {
         Text(
             title,
+            Modifier.drawWithContent { if (fitted) drawContent() },
             color = if (on) Color.Black else Color.White.copy(alpha = 0.85f),
-            fontSize = 13.sp,
+            fontSize = 13.sp * scale,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Clip,
             textAlign = TextAlign.Center,
+            onTextLayout = {
+                if (it.hasVisualOverflow && scale > 0.6f) scale = maxOf(0.6f, scale - 0.05f) else fitted = true
+            },
         )
     }
 }
