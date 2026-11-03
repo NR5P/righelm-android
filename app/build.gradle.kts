@@ -23,7 +23,7 @@ android {
         applicationId = "com.righelm.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
+        versionCode = 4
         versionName = "1.1.1"
     }
 

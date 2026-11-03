@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -130,13 +131,19 @@ fun SettingsScreen(rig: RigController) {
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Text("RigHelm", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-                    Text("Remote control for a RigHelm station (Yaesu FTDX3000)", fontSize = 12.sp, color = Palette.secondary)
+                    Text("Remote control for a RigHelm station", fontSize = 12.sp, color = Palette.secondary)
                     Text("Version ${BuildConfig.VERSION_NAME}", fontSize = 11.sp, color = Palette.secondary)
                 }
+            }
+            val uriHandler = LocalUriHandler.current
+            TextButton(onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text("Privacy policy", color = Palette.amber)
             }
         }
     }
 }
+
+private const val PRIVACY_POLICY_URL = "https://nr5p.com/righelm-android-privacy.html"
 
 private fun statusText(rig: RigController): String = when (val p = rig.phase) {
     RigController.Phase.Idle -> "Not connected"
