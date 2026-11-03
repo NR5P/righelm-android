@@ -16,15 +16,15 @@ The same name as the iPhone app. `RigHelm` alone is fine too.
 ### Short description [80]
 
 ```
-Tune, listen, talk and send CW on your Yaesu FTDX3000 over Wi-Fi with RigHelm.
+Tune, listen, talk and send CW on your radio over Wi-Fi with RigHelm.
 ```
 
 ### Full description [4000]
 
 ```
-RigHelm Remote turns your Android phone into a control head for a Yaesu FTDX3000 run by RigHelm, the free rig-control program for Linux, macOS and Windows. Walk away from the shack and keep operating from anywhere on your home Wi-Fi.
+RigHelm Remote turns your Android phone into a control head for a radio run by RigHelm, the free rig-control program for Linux, macOS and Windows. Walk away from the shack and keep operating from anywhere on your home Wi-Fi.
 
-You need RigHelm running on the computer your radio is plugged into. This app does not talk to the radio by itself, and it does not work over the internet. It controls the RigHelm station on your local network.
+You need RigHelm running on the computer your radio is plugged into, and a radio that RigHelm supports. This app does not talk to the radio by itself, and it does not work over the internet. It controls the RigHelm station on your local network.
 
 FINDS YOUR STATION
 • Stations on your Wi-Fi show up by themselves. You can also add one by address.
@@ -92,11 +92,13 @@ Publish [righelm-android-privacy.html](righelm-android-privacy.html) there first
 
 ## App access (Policy → App content → App access)
 
-Choose **All or some functionality is restricted**, add one set of instructions with no
-username or password, and paste:
+Now called **Sign in details**. Answered **No** (nothing in the app is behind a sign-in). The
+"Yes" path makes you tick a box saying the sign-in details give full access to every feature,
+which isn't true when the missing piece is a radio. If Google's review says it couldn't test
+the app, switch to **Yes** and paste this (500 characters max there, so trim it):
 
 ```
-RigHelm Remote is a remote control for RigHelm (https://github.com/NR5P/righelm), a free desktop program that runs on the computer connected to a Yaesu FTDX3000 amateur radio transceiver. The app only talks to a RigHelm station on the same local network; it has no server, no accounts and no internet features, so it cannot be fully used without that equipment.
+RigHelm Remote is a remote control for RigHelm (https://github.com/NR5P/righelm), a free desktop program that runs on the computer connected to an amateur radio transceiver. The app only talks to a RigHelm station on the same local network; it has no server, no accounts and no internet features, so it cannot be fully used without that equipment.
 
 Video of the app running against a real station: <VIDEO LINK>
 
@@ -174,5 +176,5 @@ unticked. The app has no analytics or crash reporting libraries.
 ## Release notes for 1.1.1 [500]
 
 ```
-First release on Google Play. Tune, change bands and modes, hear the radio, talk with the phone's microphone and send CW on your FTDX3000 through RigHelm. Swiping the app away now disconnects cleanly and reconnects to the same station next time.
+First release on Google Play. Tune, change bands and modes, hear the radio, talk with the phone's microphone and send CW on your radio through RigHelm. Swiping the app away now disconnects cleanly and reconnects to the same station next time.
 ```
